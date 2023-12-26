@@ -1,12 +1,23 @@
+use crate::{ca::make_ca_certificate};
 use std::collections::BTreeSet;
 use tokio::fs;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use dirs::home_dir;
-use log::{debug, info, Level};
+use log::{debug, info};
 use reqwest::Url;
 use thiserror::Error;
+use serde::Deserialize;
 
 type ConfigurationResult<T> = Result<T,ConfigurationError>;
+
+#[derive(Deserialize)]
+pub struct DefaultFilter {
+    enabled_by_default: bool,
+    file_name: String,
+    group: String,
+    title: String,
+
+}
 
 #[derive(Error, Debug)]
 pub enum ConfigurationError {
@@ -14,6 +25,8 @@ pub enum ConfigurationError {
     FileSystemError(#[from] std::io::Error),
     #[error("this user home directory not found")]
     HomeDirectoryNotFound,
+    #[error("unable store disconnected")]
+    UnableToRetrieveDefaultFilters(#[from] reqwest::Error)
 }
 
 
@@ -53,7 +66,7 @@ impl Configuration {
     pub async fn read_from_home(client: reqwest::Client) -> ConfigurationResult<Self>{
         let home_dir = get_home_directory()?;
         let configuration_directory = home_dir.join(CONFIGURATION_DIRECTORY_NAME).join("d");
-        let configuration_file_path = configuration_directory.join(CONFIGURATION_FILE_NAME);
+        // let configuration_file_path = configuration_directory.join(CONFIGURATION_FILE_NAME);
         Self::create_dir_if_missing(&configuration_directory, client).await?;
         Ok(
             Self { exclusions: BTreeSet::new() }
@@ -72,18 +85,18 @@ impl Configuration {
     }
 
     async fn new_default(client: reqwest::Client) -> ConfigurationResult<Self>{
-        let default_filter = Self::get_default_filters(client).await?;
+        let default_filters = Self::get_default_filters(client).await?;
+
+        let (x509, private_key) = ();
         Ok(Configuration {exclusions: BTreeSet::new()})
     }
 
-    async fn get_default_filters(client: reqwest::Client) -> ConfigurationResult<()> {
+    async fn get_default_filters(client: reqwest::Client) -> ConfigurationResult<Vec<DefaultFilter>> {
         let url = BASE_FILTERS_URL.parse::<Url>().unwrap();
         let filters_url = url.join(METADATA_FILE_NAME).unwrap();
-        println!("{}", filters_url);
-
-        let response = client.get(filters_url.as_str()).send().await.unwrap();
-
-        Ok(())
+        let response = client.get(filters_url.as_str()).send().await?;
+        let default_filter = response.json::<Vec<DefaultFilter>>().await?;
+        Ok(default_filter)
     }
 }
 

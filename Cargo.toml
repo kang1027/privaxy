@@ -16,7 +16,9 @@ path = "src/server/lib.rs"
 [dependencies]
 tokio = { version = "1.35.1", features = ["time", "rt", "rt-multi-thread", "macros", "fs"] }
 env_logger = "0.10.1"
-reqwest = { version = "0.11.23", features = ["__rustls", "brotli", "gzip", "deflate"] }
+reqwest = { version = "0.11.23", features = ["rustls-tls", "brotli", "gzip", "deflate", "json"] }
 dirs = "5.0.1"
 log = "0.4.20"
 thiserror = "1.0.51"
+serde = { version = "1.0.193", features = ["derive"] }
+openssl = "0.10.62"
