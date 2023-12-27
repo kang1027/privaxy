@@ -1,3 +1,6 @@
+
+use std::time::Duration;
+use log::debug;
 use privaxy_lib::start_privaxy;
 
 const PRIVAXY_STUDY_LOG_ENV_KEY: &str = "RUST_LOG";

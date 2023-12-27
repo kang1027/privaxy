@@ -22,3 +22,4 @@ log = "0.4.20"
 thiserror = "1.0.51"
 serde = { version = "1.0.193", features = ["derive"] }
 openssl = "0.10.62"
+toml = "0.8.8"
