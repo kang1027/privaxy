@@ -1,5 +1,6 @@
 use crate::{ca::make_ca_certificate};
 use std::collections::BTreeSet;
+use std::io::Error;
 use tokio::fs;
 use std::path::{PathBuf};
 use dirs::home_dir;
@@ -24,7 +25,7 @@ pub struct DefaultFilter {
     title: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Filter {
     enabled: bool,
     file_name: String,
@@ -32,7 +33,7 @@ pub struct Filter {
     title: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 enum FilterGroup {
     Default,
     Regional,
@@ -71,13 +72,13 @@ pub enum ConfigurationError {
     UnableToRetrieveDefaultFilters(#[from] reqwest::Error)
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Ca {
     ca_certificate: String,
     ca_private_key: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Configuration {
     pub exclusions: BTreeSet<String>,
     pub custom_filter: Vec<String>,
@@ -86,24 +87,52 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    pub async fn read_from_home(client: reqwest::Client) -> ConfigurationResult<()>{
+    pub async fn read_from_home(client: reqwest::Client) -> ConfigurationResult<Self>{
         let home_dir = get_home_directory()?;
-        let configuration_directory = home_dir.join(CONFIGURATION_DIRECTORY_NAME).join("d");
-        // let configuration_file_path = configuration_directory.join(CONFIGURATION_FILE_NAME);
-        Self::create_dir_if_missing(&configuration_directory, client).await?;
-        Ok(())
-    }
+        let configuration_directory = home_dir.join(CONFIGURATION_DIRECTORY_NAME);
+        let configuration_file_path = configuration_directory.join(CONFIGURATION_FILE_NAME);
 
-    async fn create_dir_if_missing(dir: &PathBuf, client: reqwest::Client) -> ConfigurationResult<()>{
-        if let Err(err) = fs::metadata(dir).await {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                debug!("Configuration directory not found, creating one");
-                fs::create_dir(dir).await.unwrap();
-                let configuration = Self::new_default(client).await?;
-                configuration.save().await?;
+        // if privaxy directory not found, then creating directory.
+        if let Err(err) = fs::metadata(&configuration_directory).await {
+            let configuration = Self::create_dir_if_missing(&configuration_directory, client, err).await?;
+            return Ok(configuration);
+        }
+
+        // if config file not found, then creating config file.
+        return match fs::read(&configuration_file_path).await {
+            Ok(bytes) => Ok(toml::from_str(&String::from_utf8_lossy(&bytes)).unwrap()),
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    debug!("Configuration file not found, creating one");
+
+                    let configuration = Self::new_default(client).await?;
+                    configuration.save_config_file().await?;
+                    Ok(configuration)
+                } else {
+                    Err(ConfigurationError::FileSystemError(err))
+                }
             }
         }
-        Ok(())
+
+        // todo configuration_file_path 못읽을때 처리 필요.
+    }
+
+    async fn create_dir_if_missing(dir: &PathBuf, client: reqwest::Client, err: Error) -> ConfigurationResult<Self> {
+        return if err.kind() == std::io::ErrorKind::NotFound {
+            debug!("Configuration directory not found, creating one");
+            match fs::create_dir(dir).await {
+                Ok(_) => {
+                    let configuration = Self::new_default(client).await?;
+                    configuration.save_config_file().await?;
+                    Ok(configuration)
+                }
+                Err(err) => {
+                    Err(ConfigurationError::FileSystemError(err))
+                }
+            }
+        } else {
+            Err(ConfigurationError::FileSystemError(err))
+        }
     }
 
     async fn new_default(client: reqwest::Client) -> ConfigurationResult<Self>{
@@ -134,7 +163,7 @@ impl Configuration {
             })
     }
 
-    async fn save(&self) -> ConfigurationResult<()> {
+    async fn save_config_file(&self) -> ConfigurationResult<()> {
         let home_directory = get_home_directory()?;
         let configuration_file_path = home_directory.join(CONFIGURATION_DIRECTORY_NAME).join(CONFIGURATION_FILE_NAME);
 
