@@ -11,6 +11,7 @@ use reqwest::{Certificate, Client, Url};
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
 
+// Configuration 메서드 결과 관리 위한 type 지정
 type ConfigurationResult<T> = Result<T,ConfigurationError>;
 
 const BASE_FILTERS_URL: &str = "https://filters.privaxy.net";
@@ -18,20 +19,47 @@ const METADATA_FILE_NAME: &str = "metadata.json";
 const CONFIGURATION_DIRECTORY_NAME: &str = ".privaxy";
 const CONFIGURATION_FILE_NAME: &str = "config";
 
+// error 관리 위해 thiserror crate 사용.
+// Configuration 의 Error 타입을 사용자 정의 지정.
+#[derive(Error, Debug)]
+pub enum ConfigurationError {
+    #[error("file system error")]
+    FileSystemError(#[from] std::io::Error),
+    #[error("this user home directory not found")]
+    HomeDirectoryNotFound,
+    #[error("unable store disconnected")]
+    UnableToRetrieveDefaultFilters(#[from] reqwest::Error)
+}
 
-#[derive(Deserialize)]
-pub struct DefaultFilter {
-    enabled_by_default: bool,
-    file_name: String,
-    group: String,
-    title: String,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Configuration {
+    // proxy 처리하지 않을 호스트들
+    exclusions: BTreeSet<String>,
+    // 사용자 지정 필터
+    custom_filter: Vec<String>,
+    // 인증기관(Certification Authority) 인증서
+    ca: Ca,
+    // 적용중인 필터들(?)
+    filters: Vec<Filter>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Ca {
+    // 인증서
+    ca_certificate: String,
+    // 비밀키
+    ca_private_key: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Filter {
+    // 적용 여부
     enabled: bool,
+    // 필터 이름
     file_name: String,
+    // 필터 그룹
     group: FilterGroup,
+    // 필터 제목
     title: String,
 }
 
@@ -45,6 +73,17 @@ enum FilterGroup {
     Social,
 }
 
+// https://filters.privaxy.net/metadata.json 에서 스크레핑하기 위한 구조체
+// privaxy 에서 사전에 지정한 DefaultFilter List 임.
+#[derive(Deserialize)]
+pub struct DefaultFilter {
+    enabled_by_default: bool,
+    file_name: String,
+    group: String,
+    title: String,
+}
+
+// DefaultFilter -> Filter 매핑 trait 구현체
 impl From<DefaultFilter> for Filter {
     fn from(default_filter: DefaultFilter) -> Self {
         Self {
@@ -64,30 +103,6 @@ impl From<DefaultFilter> for Filter {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum ConfigurationError {
-    #[error("file system error")]
-    FileSystemError(#[from] std::io::Error),
-    #[error("this user home directory not found")]
-    HomeDirectoryNotFound,
-    #[error("unable store disconnected")]
-    UnableToRetrieveDefaultFilters(#[from] reqwest::Error)
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Ca {
-    ca_certificate: String,
-    ca_private_key: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Configuration {
-    exclusions: BTreeSet<String>,
-    custom_filter: Vec<String>,
-    ca: Ca,
-    filters: Vec<Filter>,
-}
-
 impl Configuration {
     pub async fn read_from_home(client: Client) -> ConfigurationResult<Self>{
 
@@ -95,7 +110,7 @@ impl Configuration {
         let configuration_directory = home_dir.join(CONFIGURATION_DIRECTORY_NAME);
         let configuration_file_path = configuration_directory.join(CONFIGURATION_FILE_NAME);
 
-        // if privaxy directory not found, then creating directory and config file.
+        // .privaxy directory 가 없을 시 .privaxy directory 와 config 파일 생성
         if let Err(err) = fs::metadata(&configuration_directory).await {
             let configuration = Self::create_dir_if_not_found(&configuration_directory, client, err).await?;
             return Ok(configuration);
@@ -124,6 +139,7 @@ impl Configuration {
             debug!("Configuration directory not found, creating one");
             return match fs::create_dir(dir).await {
                 Ok(_) => {
+                    // default configuration 설정
                     let configuration = Self::new_default(client).await?;
                     configuration.save_to_file().await?;
                     Ok(configuration)
@@ -175,6 +191,7 @@ impl Configuration {
     async fn get_default_filters(client: Client) -> ConfigurationResult<Vec<DefaultFilter>> {
         let url = BASE_FILTERS_URL.parse::<Url>().unwrap();
         let filters_url = url.join(METADATA_FILE_NAME).unwrap();
+        // https://filters.privaxy.net/metadata.json 에서 스크레핑해 DefaultFilter 에 매핑.
         let response = client.get(filters_url.as_str()).send().await?;
         let default_filter = response.json::<Vec<DefaultFilter>>().await?;
         Ok(default_filter)
@@ -207,7 +224,8 @@ impl Configuration {
 }
 
 fn get_home_directory() -> ConfigurationResult<PathBuf> {
-    match home_dir() {
+    // dirs crate 사용해 home_dir 구함.
+    match dirs::home_dir() {
         Some(dir) => Ok(dir),
         None => Err(ConfigurationError::HomeDirectoryNotFound),
     }
