@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 use lazy_static::lazy_static;
 use wildmatch::WildMatch;
 
+// 정규표현식 crate 인 WildMatch 를 사용해 Exclusion List 만듦.
 #[derive(Clone, Debug)]
 struct WildMatchCollection(Vec<WildMatch>);
 impl WildMatchCollection {
@@ -20,6 +21,7 @@ impl WildMatchCollection {
     fn is_match(&self, element: &str) -> bool{
         let lowercase_element = element.to_lowercase();
 
+        // 주어진 element 가 존재하는지 확인.
         self.0
             .iter()
             .any(|pattern| pattern.matches(&lowercase_element))
@@ -74,6 +76,7 @@ lazy_static! {
     };
 }
 
+// RwLock => 다중 Thread 읽기, 단일 Thread 쓰기. 동시성 제어로 Mutex 와 달리 Sync 안됨.
 #[derive(Clone, Debug)]
 pub struct LocalExclusionStore(Arc<RwLock<WildMatchCollection>>);
 

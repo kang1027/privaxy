@@ -53,7 +53,7 @@ pub async fn start_privaxy() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // proxy 처리 예외 호스트 List 생성
+    // proxy 처리 예외 호스트 List 생성, 첫 configuration 생성 시  get_exclusion() 이 null 인데 추후 어떻게 관리하는지 확인 필요. (?)
     let local_exclusion_store_clone = LocalExclusionStore::new(configuration.get_exclusion().unwrap()).clone();
 
     let (ca_certificate, ca_private_key) = configuration.get_certificate().unwrap();
