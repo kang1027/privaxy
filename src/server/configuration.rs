@@ -3,11 +3,10 @@ use std::collections::BTreeSet;
 use std::io::{Error};
 use tokio::fs;
 use std::path::{PathBuf};
-use dirs::home_dir;
 use log::{debug, error};
 use openssl::pkey::{PKey, Private};
 use openssl::x509::X509;
-use reqwest::{Certificate, Client, Url};
+use reqwest::{Client, Url};
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
 
@@ -116,7 +115,7 @@ impl Configuration {
             return Ok(configuration);
         }
 
-        // if config file not found, then creating config file.
+        // config file 이 없을 때, config file 생성.
         return match fs::read(&configuration_file_path).await {
             Ok(bytes) => Ok(toml::from_str(&String::from_utf8_lossy(&bytes)).unwrap()),
             Err(err) => Ok(Self::create_config_file_if_not_found(client, err).await?)
@@ -128,7 +127,7 @@ impl Configuration {
             debug!("Configuration file not found, creating one");
 
             let configuration = Self::new_default(client).await?;
-            configuration.save_to_file().await?;
+            configuration.save_to_config_file().await?;
             return Ok(configuration)
         }
         Err(ConfigurationError::FileSystemError(err))
@@ -141,7 +140,7 @@ impl Configuration {
                 Ok(_) => {
                     // default configuration 설정
                     let configuration = Self::new_default(client).await?;
-                    configuration.save_to_file().await?;
+                    configuration.save_to_config_file().await?;
                     Ok(configuration)
                 }
                 Err(err) => Err(ConfigurationError::FileSystemError(err))
@@ -153,12 +152,17 @@ impl Configuration {
     async fn new_default(client: Client) -> ConfigurationResult<Self>{
         let default_filters = Self::get_default_filters(client).await?;
 
+        // X.509 인증서와 private key 생성
         let (x509, private_key) = make_ca_certificate();
 
+        // X.509 인증서를 pem 으로 변환
+        // 데이터를 텍스트로 쉽게 표시하고 전송하기 위해 pem(Privacy Enhanced Mail) 으로 변환함.
+        // 텍스트 에디터에서 열람 가능, 텍스트 기반 프로토콜 도구와 호환성 높음
         let x509_pem = std::str::from_utf8(&x509.to_pem().unwrap())
             .unwrap()
             .to_string();
 
+        // private key 도 pem 으로 변환
         let private_key_pem = std::str::from_utf8(&private_key.private_key_to_pem_pkcs8().unwrap())
             .unwrap()
             .to_string();
@@ -178,8 +182,9 @@ impl Configuration {
             })
     }
 
-    async fn save_to_file(&self) -> ConfigurationResult<()> {
+    async fn save_to_config_file(&self) -> ConfigurationResult<()> {
         let home_directory = get_home_directory()?;
+        // home_dir/.privaxy/config
         let configuration_file_path = home_directory.join(CONFIGURATION_DIRECTORY_NAME).join(CONFIGURATION_FILE_NAME);
 
         let configuration_serialized = toml::to_string_pretty(&self).unwrap();

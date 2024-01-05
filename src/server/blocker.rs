@@ -15,7 +15,7 @@ use crate::blocker_utils::{
 
 pub type AdblockRequestChannel = Sender<BlockerRequest>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BlockingDisabledStore(pub Arc<RwLock<bool>>);
 
 impl BlockingDisabledStore {
@@ -198,7 +198,7 @@ impl Blocker {
     }
 }
 
-#[derive!(Debug, Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct AdblockRequester {
     adblock_request_channel: AdblockRequestChannel,
 }

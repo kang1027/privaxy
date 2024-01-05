@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 use crossbeam_channel::{Receiver, Sender};
-use log::{error};
+use log::{debug, error};
 use reqwest::redirect::Policy;
 use crate::proxy::exclusion::LocalExclusionStore;
 use crate::blocker::{AdblockRequester, BlockerRequest};
@@ -28,7 +28,7 @@ pub struct PrivaxyServer {
     pub requests_broadcast_sender: broadcast::Sender<Event>
 }
 
-pub async fn start_privaxy() -> PrivaxyServer {
+pub async fn start_privaxy() -> Result<(), Box<dyn std::error::Error>> {
     // let ip = [127, 0, 0, 1]; // localhost address
 
     // 대부분의 프록시를 수행하기 위해 hyper Client 대신 request 사용함.
@@ -37,14 +37,14 @@ pub async fn start_privaxy() -> PrivaxyServer {
         .use_rustls_tls() // tls 사용
         .redirect(Policy::none()) // redirection 따르지 않음.
         .no_proxy() // 사전 지정한 호스트들에 대해 proxy 사용하지 않도록 지정.
-        // LocalExclusionStore 에서 exclusion 호스트 list 설정.
+                                // LocalExclusionStore 에서 exclusion 호스트 list 설정.
         .gzip(true) // 서버에서 gzip 으로 압축된 파일 처리 허용
         .brotli(true) // 서버에서 brotli 로 압축된 파일 처리 허용
         .deflate(true) // 서버에서 deflate 로 압축된 파일 처리 허용
         .build()    // 위 설정 기반으로 Client 빌드
         .unwrap();
 
-    // configuration 모듈의 read_from_home(client: Client) 메서드 호출해 서버의 환경 설정.
+    // 서버 환경 설정
     let configuration = match configuration::Configuration::read_from_home(client.clone()).await {
         Ok(configuration) => configuration,
         Err(err) => {
@@ -53,6 +53,7 @@ pub async fn start_privaxy() -> PrivaxyServer {
         }
     };
 
+    // proxy 처리 예외 호스트 List 생성
     let local_exclusion_store_clone = LocalExclusionStore::new(configuration.get_exclusion().unwrap()).clone();
 
     let (ca_certificate, ca_private_key) = configuration.get_certificate().unwrap();
@@ -65,8 +66,8 @@ pub async fn start_privaxy() -> PrivaxyServer {
     let statistics = statistics::Statistics::new();
     let statistics_clone = statistics.clone();
 
-    let (broadcast_tx, _broadcast_rx) = broadcast::channel(32);
-    let broadcast_tx_clone = broadcast_tx.clone();
+    // let (broadcast_tx, _broadcast_rx) = broadcast::channel(32);
+    // let broadcast_tx_clone = broadcast_tx.clone();
 
     let blocking_disabled_store = blocker::BlockingDisabledStore(Arc::new(RwLock::new(false)));
     let blocking_disabled_store_clone = blocking_disabled_store.clone();
@@ -78,5 +79,5 @@ pub async fn start_privaxy() -> PrivaxyServer {
 
     // let configuration_updater = configuration::ConfigurationUpdater
 
-
+    Ok(())
 }

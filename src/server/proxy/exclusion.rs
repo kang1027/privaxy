@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 use lazy_static::lazy_static;
 use wildmatch::WildMatch;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct WildMatchCollection(Vec<WildMatch>);
 impl WildMatchCollection {
     fn new(patterns: Vec<String>) -> Self {
@@ -74,7 +74,7 @@ lazy_static! {
     };
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LocalExclusionStore(Arc<RwLock<WildMatchCollection>>);
 
 impl LocalExclusionStore {

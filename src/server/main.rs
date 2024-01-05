@@ -9,7 +9,7 @@ async fn main() {
 
     if std::env::var(RUST_LOG_ENV_KEY).is_err() {
         // logger level debug 로 설정. (debug, error console 에 표시됨)
-        std::env::set_var(RUST_LOG_ENV_KEY, "privaxy=debug");
+        std::env::set_var(RUST_LOG_ENV_KEY, "privaxy=debug");
     }
     env_logger::init();
 

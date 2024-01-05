@@ -9,7 +9,7 @@ use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::{X509, X509NameBuilder, X509Req, X509ReqBuilder};
 use openssl::x509::extension::{AuthorityKeyIdentifier, BasicConstraints, KeyUsage, SubjectAlternativeName, SubjectKeyIdentifier};
-use rustls::{Certificate, ServerConfig};
+use rustls::{Certificate, PrivateKey, ServerConfig};
 use uluru::LRUCache;
 
 const MAX_CACHED_CERTIFICATES:usize = 1_000;
@@ -33,6 +33,20 @@ impl SignedWithCaCert {
             Certificate(x509.to_der().unwrap()),
             Certificate(ca_certificate.to_der().unwrap()),
         ];
+
+        let server_configuration = ServerConfig::builder()
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(certs, PrivateKey(private_key.private_key_to_der().unwrap()))
+            .unwrap();
+
+        Self {
+            authority,
+            server_configuration,
+        }
     }
 
     fn build_ca_signed_cert(
