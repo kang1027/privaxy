@@ -156,6 +156,11 @@ impl SignedWithCaCert {
 
 #[derive(Clone)]
 pub struct CertCache {
+    // LRU (Least Recently Used) => 운영체제의 페이지 교체 알고리즘 중 하나,
+    // 페이지를 교체할 때 가장 오랫동안 사용되지 않은 페이지를 교체 대상으로 삼는 알고리즘.
+    // LRU Cache => Cache 에 공간이 부족할 때 가장 오랫동안 사용하지 않은 데이터를 제거하고 새로운 데이터를 배치함.
+    // LRUCache 는 get, get_mut, put, pop 메서드 제공하며, 이 연산들은 전부 O(1)에 처리 가능. (Double Linked List 사용)
+    // MAX_CACHED_CERTIFICATES 수 만큼 Cache 공간 생성 및, LRU 알고리즘에 따라 Cache 관리.
     cache: Arc<Mutex<LRUCache<SignedWithCaCert, MAX_CACHED_CERTIFICATES>>>,
     // We use a single RSA key for all certificates.
     private_key: PKey<Private>,
@@ -182,6 +187,7 @@ impl CertCache {
         cache.insert(certificate);
     }
 
+    // mitm 에서 어떻게 사용하는지 확인 후 설명 (?)
     async fn get(&self, authority: Authority) -> SignedWithCaCert {
         let mut cache = self.cache.lock().await;
 

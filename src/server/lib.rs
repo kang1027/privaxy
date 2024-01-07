@@ -61,6 +61,7 @@ pub async fn start_privaxy() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
         .to_string();
 
+    // 코드이해하고 채우기 (?)
     let cert_cache = cert::CertCache::new(ca_certificate, ca_private_key);
 
     let statistics = statistics::Statistics::new();

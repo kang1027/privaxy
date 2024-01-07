@@ -215,7 +215,7 @@ impl Configuration {
                 std::process::exit(1)
             }
         };
-        let pem = match PKey::private_key_from_pem(self.ca.ca_private_key.as_bytes()) {
+        let p_key = match PKey::private_key_from_pem(self.ca.ca_private_key.as_bytes()) {
             Ok(pem) => pem,
             Err(err) => {
                 error!("Unable to decode ca private key: {:?}", err);
@@ -223,7 +223,7 @@ impl Configuration {
             }
         };
 
-        Ok((x509, pem))
+        Ok((x509, p_key))
     }
 
 }
