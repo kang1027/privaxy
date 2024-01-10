@@ -1,14 +1,21 @@
 use crate::{ca::make_ca_certificate};
 use std::collections::BTreeSet;
-use std::io::{Error};
-use tokio::fs;
+use std::io::{Error, ErrorKind};
+use tokio::{fs, spawn};
 use std::path::{PathBuf};
-use log::{debug, error};
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
+use futures::future::{Abortable, AbortHandle, try_join_all};
+use log::{debug, error, info};
 use openssl::pkey::{PKey, Private};
 use openssl::x509::X509;
 use reqwest::{Client, Url};
 use thiserror::Error;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::{channel, Sender};
+use tokio::time::sleep;
+use url::Url;
+use crate::blocker::AdblockRequester;
 
 // Configuration 메서드 결과 관리 위한 type 지정
 type ConfigurationResult<T> = Result<T,ConfigurationError>;
@@ -17,6 +24,8 @@ const BASE_FILTERS_URL: &str = "https://filters.privaxy.net";
 const METADATA_FILE_NAME: &str = "metadata.json";
 const CONFIGURATION_DIRECTORY_NAME: &str = ".privaxy";
 const CONFIGURATION_FILE_NAME: &str = "config";
+const FILTERS_DIRECTORY_NAME: &str = "filters";
+const FILTERS_UPDATE_AFTER: Duration = Duration::from_secs(60 * 10);
 
 // error 관리 위해 thiserror crate 사용.
 // Configuration 의 Error 타입을 사용자 정의 지정.
@@ -80,6 +89,41 @@ pub struct DefaultFilter {
     file_name: String,
     group: String,
     title: String,
+}
+
+impl Filter {
+    async fn update(&self, http_client: &Client) -> ConfigurationResult<String> {
+        debug!("Updating filter: {}", self.title);
+
+        let home_directory = get_home_directory()?;
+        let configuration_directory = home_directory.join(CONFIGURATION_DIRECTORY_NAME);
+        let filters_directory = configuration_directory.join(FILTERS_DIRECTORY_NAME);
+
+        fs::create_dir(&filters_directory).await?;
+
+        let filter = get_filter(&self.file_name, http_client).await?;
+
+        fs::write(filters_directory.join(&self.file_name), &filter).await?;
+
+        Ok(filter)
+    }
+
+    pub async fn get_contents(&self, http_client: &Client) -> ConfigurationResult<String> {
+        let filter_path = get_home_directory()?
+            .join(CONFIGURATION_DIRECTORY_NAME)
+            .join(FILTERS_DIRECTORY_NAME)
+            .join(&self.file_name);
+
+        match fs::read(filter_path).await {
+            Err(err) => {
+                if err.kind() == ErrorKind::NotFound {
+                    self.update(http_client).await
+                }
+                Err(ConfigurationError::FileSystemError(err))
+            }
+            Ok(filter) => Ok(std::str::from_utf8(&filter)?.to_string()),
+        }
+    }
 }
 
 // DefaultFilter -> Filter 매핑 trait 구현체
@@ -202,6 +246,29 @@ impl Configuration {
         Ok(default_filter)
     }
 
+    pub fn get_enabled_filters(&self) -> Vec<&Filter> {
+        self.filters
+            .iter()
+            .filter(|filter| filter.enabled)
+            .collect()
+    }
+
+    pub async fn update_filters(&self, http_client: Client) -> ConfigurationResult<()> {
+        debug!("Updating filters");
+
+        let futures = self.filters.iter().filter_map(|filter| {
+            if filter.enabled {
+                Some(filter.update(&http_client))
+            }
+            None
+        });
+
+        try_join_all(futures).await?;
+
+        Ok(())
+    }
+
+
     // Getters in blow
     pub fn get_exclusion(&self) -> ConfigurationResult<Vec<String>> {
         Ok(self.exclusions.clone().into_iter().collect())
@@ -235,3 +302,133 @@ fn get_home_directory() -> ConfigurationResult<PathBuf> {
         None => Err(ConfigurationError::HomeDirectoryNotFound),
     }
 }
+
+async fn get_filter(
+    filter_file_name: &str,
+    http_client: &Client,
+) -> ConfigurationResult<String> {
+    let base_filters_url = BASE_FILTERS_URL.parse::<Url>().unwrap();
+    let filter_url = base_filters_url.join(filter_file_name).unwrap();
+
+    let response = http_client.get(filter_url.as_str()).send().await?;
+
+    let filter = response.text().await?;
+
+    Ok(filter)
+}
+
+pub struct ConfigurationUpdater {
+    filters_updater_abort_handle: AbortHandle,
+    rx: Receiver<Configuration>,
+    pub tx: Sender<Configuration>,
+    http_client: reqwest::Client,
+    adblock_requester: AdblockRequester,
+}
+
+impl ConfigurationUpdater {
+    pub(crate) async fn new(
+        configuration: Configuration,
+        http_client: Client,
+        adblock_requester: AdblockRequester,
+        tx_rx: Option<(
+            Sender<Configuration>,
+            Receiver<Configuration>
+        )>,
+    ) -> Self {
+        let (abort_handle, abort_registration) = AbortHandle::new_pair();
+
+        let (tx, rx) = match tx_rx {
+            Some((tx, rx)) => (tx, rx),
+            None => channel(1),
+        };
+
+        let http_client_clone = http_client.clone();
+        let adblock_requester_clone = adblock_requester.clone();
+
+        let filters_updater = Abortable::new(
+            async move {
+                Self::filters_updater(
+                    configuration,
+                    adblock_requester_clone,
+                    http_client_clone.clone(),
+                ).await
+            },
+            abort_registration,
+        );
+
+        spawn(filters_updater);
+
+        Self {
+            filters_updater_abort_handle: abort_handle,
+            rx,
+            tx,
+            http_client,
+            adblock_requester: adblock_request,
+        }
+
+    }
+
+    pub(crate) fn start(mut self) {
+        spawn(async move {
+            if let Some(configuration) = self.rx.recv().await {
+                self.filters_updater_abort_handle.abort();
+
+                let filters = get_filters_content(&configuration, &self.http_client).await;
+
+                self.adblock_requester.replace_engine(filters).await;
+
+                let new_self = Self::new(
+                    configuration,
+                    self.http_client,
+                    self.adblock_requester,
+                    Some((self.tx, self.rx)),
+                ).await;
+
+                new_self.start();
+
+                info!("Applied new configuration");
+            }
+        });
+    }
+
+
+    async fn filters_updater(
+        configuration: Configuration,
+        adblock_requester: AdblockRequester,
+        http_client: Client,
+    ) {
+        loop {
+            sleep(FILTERS_UPDATE_AFTER).await;
+
+            if let Err(err) = configuration.update_filters(http_client.clone()).await {
+                error!("An error occurred while trying to update filters: {:?}", err);
+            }
+
+            let filters = get_filters_content(&configuration, &http_client).await;
+            adblock_requester.replace_engine(filters).await;
+
+            info!("Updated filters");
+        }
+    }
+}
+
+async fn get_filters_content(
+    configuration: &Configuration,
+    http_client: &Client,
+) -> Vec<String> {
+    let mut filters = Vec::new();
+
+    for filter in configuration.get_enabled_filters() {
+        match filter.get_contents(http_client).await {
+            Ok(filter) => filters.push(filter),
+            Err(err) => {
+                error!("Unable to retrieve filter: {:?}, skipping.", err)
+            }
+        }
+    }
+
+    filters.append(&mut configuration.custom_filter.clone());
+
+    filters
+}
+

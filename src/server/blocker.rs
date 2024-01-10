@@ -99,6 +99,7 @@ impl Blocker {
         receiver: Receiver<BlockerRequest>,
         blocking_disabled: BlockingDisabledStore,
     ) -> Self {
+
         Self {
             sender,
             receiver,
